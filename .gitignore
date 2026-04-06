@@ -3,7 +3,6 @@ settings.toml
 lib/
 boot_out.txt
 
-
 # CircuitPython caches
 __pycache__/
 *.pyc
