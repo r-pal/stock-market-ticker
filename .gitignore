@@ -1,0 +1,19 @@
+# CircuitPython / device volume
+settings.toml
+lib/
+boot_out.txt
+
+
+# CircuitPython caches
+__pycache__/
+*.pyc
+
+# macOS / Finder / filesystem noise on removable drives
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes
+.Trash-*/
+.Trash-1000
+.fseventsd/
+.metadata_never_index
