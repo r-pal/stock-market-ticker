@@ -16,13 +16,16 @@ fontpool = FontPool()
 fontpool.add_font("arial", "fonts/Arial-10.pcf")
 fontpool.add_font("dejavu", "fonts/DejaVuSans-10.pcf")
 
-message1 = Message(fontpool.find_font("dejavu"))
-message1.add_text(
-    "Ragnarök: the Goblin Stock Market          ", color=0x3ABF24, y_offset=-11
+messageTop = Message(fontpool.find_font("dejavu"))
+messageTop.add_text(
+    "Ragnarök: the Goblin Stock Market ", color=0xFF7F50, y_offset=7
 )
-message2 = Message(fontpool.find_font("dejavu"))
-message2.add_text(
-    "Ragnarök: the Goblin Stock Market          ", color=0xFF7F50, y_offset=7
-)
+# stock prices to go here
 
-dual_scroll.run_forever(messageboard, message1, message2, y=0, px_per_sec=20)
+messageBottom = Message(fontpool.find_font("dejavu"))
+messageBottom.add_text(
+    " Ragnarök: the Goblin Stock Market", color=0x3ABF24, y_offset=-11
+)
+# personalised messages to go here
+
+dual_scroll.run_forever(messageboard, messageBottom, messageTop, y=0, px_per_sec=20)
