@@ -31,13 +31,14 @@ fontpool.add_font("dejavu", "fonts/DejaVuSans-10.pcf")
 
 messageTop = Message(fontpool.find_font("dejavu"))
 messageTop.add_text(
-    "Ragnarök: the Goblin Stock Market ", color=0xFF7F50, y_offset=7
+    "_", color=0xFF7F50, y_offset=7
 )
+    # Ragnarök: the Goblin Stock Market 
 # stock prices to go here
 
 messageBottom = Message(fontpool.find_font("dejavu"))
 messageBottom.add_text(
-    " Ragnarök: the Goblin Stock Market", color=0x3ABF24, y_offset=-11
+    "Ragnarök: the Goblin Stock Market ", color=0x3ABF24, y_offset=-11
 )
 # personalised messages to go here
 
@@ -198,4 +199,11 @@ if backend_host:
 else:
     print("Missing BACKEND_HOST; skipping ticker fetch.")
 
-dual_scroll.run_forever(messageboard, messageBottom, messageTop, y=0, px_per_sec=20)
+dual_scroll.run_forever(
+    messageboard,
+    messageBottom,
+    messageTop,
+    y=0,
+    px_per_sec_bottom=10,
+    px_per_sec_top=30,
+)
