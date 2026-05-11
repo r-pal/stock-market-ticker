@@ -80,6 +80,8 @@ def run_forever(
     px_per_sec_top=20,
     px_per_sec=None,
     frame_hz=60.0,
+    poll_interval_s=None,
+    poll_callback=None,
 ):
     """
     Scroll message_left and message_right both to the left, forever.
@@ -91,6 +93,10 @@ def run_forever(
     ``px_per_sec_bottom`` and ``px_per_sec_top``. If ``px_per_sec`` is set, it
     applies to both streams (handy for a single speed). ``frame_hz`` is unused
     and kept for callers that still pass it.
+
+    If ``poll_interval_s`` and ``poll_callback`` are set, ``poll_callback()`` is
+    invoked (errors swallowed) whenever that many seconds have elapsed while
+    scrolling.
 
     Uses the same double-buffer and compositing as MessageBoard._draw.
     Second stream starts half a display width ahead so both can share the same y.
@@ -116,6 +122,10 @@ def run_forever(
     last_t = time.monotonic()
     accum_bottom = 0.0
     accum_top = 0.0
+
+    next_poll_at = None
+    if poll_interval_s is not None and poll_callback is not None:
+        next_poll_at = time.monotonic() + float(poll_interval_s)
 
     while True:
         t_loop = time.monotonic()
@@ -148,5 +158,15 @@ def run_forever(
         _composite_message(buf, board, message_right, x2, y, foreground)
 
         board._dbl_buf.show()
+
+        if next_poll_at is not None:
+            now = time.monotonic()
+            if now >= next_poll_at:
+                try:
+                    poll_callback()
+                except Exception as exc:
+                    print("poll_callback:", exc)
+                next_poll_at = time.monotonic() + float(poll_interval_s)
+
         elapsed = time.monotonic() - t_loop
         time.sleep(max(0, loop_dt - elapsed))

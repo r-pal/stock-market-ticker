@@ -87,6 +87,38 @@ def tcp_reachable(pool, host, port, timeout_s=5):
         sock.close()
 
 
+def fetch_and_apply_public_ticker(requests_session, backend_host_spec, message_top):
+    """
+    GET /api/public/ticker and replace message_top text on success.
+    Returns True if the message was updated. Logs and returns False otherwise.
+    """
+    url = f"http://{backend_host_spec}/api/public/ticker"
+    resp = requests_session.get(url, timeout=5)
+    try:
+        code = getattr(resp, "status_code", None)
+        if code is not None and code != 200:
+            print(f"ticker poll: HTTP {code} from {url}")
+            return False
+        try:
+            payload = resp.json()
+        except Exception:
+            payload = json.loads(resp.text)
+        ticker_message = (
+            payload.get("message")
+            if isinstance(payload, dict)
+            else None
+        )
+        if isinstance(ticker_message, str) and ticker_message.strip():
+            message_top.clear()
+            message_top.add_text(ticker_message, color=0xFF7F50, y_offset=7)
+            print("Ticker message updated.")
+            return True
+        print("ticker poll: no usable 'message' in JSON")
+        return False
+    finally:
+        resp.close()
+
+
 def show_backend_misconfig(msg_print, line1, line2):
     print(msg_print)
     show_two_line_status(line1, line2, status_color_err)
@@ -128,6 +160,9 @@ print(f"WiFi connected: {ip}")
 show_boot_status(f"ok {ip}", status_color_ok)
 time.sleep(3)
 
+ticker_poll_interval_s = None
+ticker_poll_callback = None
+
 # Fetch ticker JSON and set it as the top message
 if backend_host:
     print(f"Backend host (from settings): {backend_host}")
@@ -154,42 +189,34 @@ if backend_host:
             try:
                 show_boot_status("ticker", status_color_ok)
                 requests = adafruit_requests.Session(pool, ssl.create_default_context())
-                url = f"http://{backend_host}/api/public/ticker"
-                print(f"GET {url}")
-                resp = requests.get(url, timeout=5)
+                print(f"GET http://{backend_host}/api/public/ticker")
                 try:
-                    code = getattr(resp, "status_code", None)
-                    if code is not None and code != 200:
+                    ok = fetch_and_apply_public_ticker(
+                        requests, backend_host, messageTop
+                    )
+                except Exception as exc:
+                    show_backend_misconfig(
+                        f"Ticker request failed for {backend_host}: {exc}",
+                        "ticker",
+                        "fetch fail",
+                    )
+                else:
+                    if not ok:
                         show_backend_misconfig(
-                            f"Backend HTTP error at {url}: status {code}",
-                            "http",
-                            f"err {code}",
+                            f"Ticker JSON at http://{backend_host}/api/public/ticker "
+                            "has no usable 'message' or non-200 response.",
+                            "ticker",
+                            "bad json",
                         )
                     else:
-                        try:
-                            payload = resp.json()
-                        except Exception:
-                            payload = json.loads(resp.text)
+                        ticker_poll_interval_s = 20
 
-                        ticker_message = (
-                            payload.get("message")
-                            if isinstance(payload, dict)
-                            else None
-                        )
-                        if isinstance(ticker_message, str) and ticker_message.strip():
-                            messageTop.clear()
-                            messageTop.add_text(
-                                ticker_message, color=0xFF7F50, y_offset=7
+                        def _ticker_poll():
+                            fetch_and_apply_public_ticker(
+                                requests, backend_host, messageTop
                             )
-                            print("Ticker message loaded.")
-                        else:
-                            show_backend_misconfig(
-                                f"Ticker JSON at {url} has no usable 'message' key.",
-                                "ticker",
-                                "bad json",
-                            )
-                finally:
-                    resp.close()
+
+                        ticker_poll_callback = _ticker_poll
             except Exception as exc:
                 show_backend_misconfig(
                     f"Ticker request failed for {backend_host}: {exc}",
@@ -206,4 +233,6 @@ dual_scroll.run_forever(
     y=0,
     px_per_sec_bottom=10,
     px_per_sec_top=30,
+    poll_interval_s=ticker_poll_interval_s,
+    poll_callback=ticker_poll_callback,
 )
