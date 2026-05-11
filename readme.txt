@@ -2,6 +2,13 @@ To view console logs, enter this in the console:
 
 /dev/tty.usbmodem* 115200
 
+To find your LAN IP:
+
+```bash
+ipconfig getifaddr en0
+```
+
+Make sure this is correct in the settings.toml
 
 JSON from Backend example:
 
