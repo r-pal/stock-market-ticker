@@ -29,26 +29,26 @@ fontpool = FontPool()
 fontpool.add_font("arial", "fonts/Arial-10.pcf")
 fontpool.add_font("dejavu", "fonts/DejaVuSans-10.pcf")
 
+status_color_ok = 0x3ABF24
+status_color_err = 0xFF4040
+
+color_wares = 0xFF7F50
+color_accounts = 0x3ABF24
+color_trend_up = 0x3ABF24
+color_trend_down = 0xFF0000
+
+TOP_Y_OFFSET = 7
+BOTTOM_Y_OFFSET = -11
+
 messageTop = Message(fontpool.find_font("dejavu"))
-messageTop.add_text(
-    "_", color=0xFF7F50, y_offset=7
-)
-    # Ragnarök: the Goblin Stock Market 
-# stock prices to go here
+messageTop.add_text("_", color=color_wares, y_offset=TOP_Y_OFFSET)
 
 messageBottom = Message(fontpool.find_font("dejavu"))
-messageBottom.add_text(
-    "Ragnarök: the Goblin Stock Market ", color=0x3ABF24, y_offset=-11
-)
-# personalised messages to go here
+messageBottom.add_text("_", color=color_accounts, y_offset=BOTTOM_Y_OFFSET)
 
 ssid = os.getenv("CIRCUITPY_WIFI_SSID")
 password = os.getenv("CIRCUITPY_WIFI_PASSWORD")
 backend_host = os.getenv("BACKEND_HOST")
-
-
-status_color_ok = 0x3ABF24
-status_color_err = 0xFF4040
 
 bootStatus = Message(fontpool.find_font("dejavu"))
 
@@ -87,33 +87,90 @@ def tcp_reachable(pool, host, port, timeout_s=5):
         sock.close()
 
 
-def fetch_and_apply_public_ticker(requests_session, backend_host_spec, message_top):
+def apply_wares_line(message, wares):
+    """Build top tickertape from wares list (name + trend-coloured price)."""
+    if not isinstance(wares, list) or not wares:
+        return False
+
+    sep = "   "
+    segments = []
+    for item in wares:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        price = str(item.get("price") or "").strip()
+        trend = item.get("trend")
+        if not name and not price:
+            continue
+        if segments:
+            segments.append((sep, color_wares))
+        if name:
+            segments.append((name + " ", color_wares))
+        if trend == "up" and price:
+            segments.append(("\u25b2" + price, color_trend_up))
+        elif trend == "down" and price:
+            segments.append(("\u25bc" + price, color_trend_down))
+        elif price:
+            segments.append((price, color_wares))
+
+    if not segments:
+        return False
+
+    message.clear()
+    for text, color in segments:
+        message.add_text(text, color=color, y_offset=TOP_Y_OFFSET)
+    message.add_text(" ", color=color_wares, y_offset=TOP_Y_OFFSET)
+    return True
+
+
+def apply_accounts_line(message, accounts):
+    """Build bottom tickertape from account strings."""
+    if not isinstance(accounts, list) or not accounts:
+        return False
+
+    parts = []
+    for entry in accounts:
+        text = str(entry).strip() if entry is not None else ""
+        if text:
+            parts.append(text)
+    if not parts:
+        return False
+
+    message.clear()
+    message.add_text(
+        "   ".join(parts) + " ",
+        color=color_accounts,
+        y_offset=BOTTOM_Y_OFFSET,
+    )
+    return True
+
+
+def fetch_and_apply_tickertape(requests_session, backend_host_spec, message_top, message_bottom):
     """
-    GET /api/public/ticker and replace message_top text on success.
-    Returns True if the message was updated. Logs and returns False otherwise.
+    GET /api/tickertape and refresh top (wares) and bottom (accounts) lines.
+    Returns True if at least one line was updated. Logs and returns False otherwise.
     """
-    url = f"http://{backend_host_spec}/api/public/ticker"
+    url = f"http://{backend_host_spec}/api/tickertape"
     resp = requests_session.get(url, timeout=5)
     try:
         code = getattr(resp, "status_code", None)
         if code is not None and code != 200:
-            print(f"ticker poll: HTTP {code} from {url}")
+            print(f"tickertape poll: HTTP {code} from {url}")
             return False
         try:
             payload = resp.json()
         except Exception:
             payload = json.loads(resp.text)
-        ticker_message = (
-            payload.get("message")
-            if isinstance(payload, dict)
-            else None
-        )
-        if isinstance(ticker_message, str) and ticker_message.strip():
-            message_top.clear()
-            message_top.add_text(ticker_message, color=0xFF7F50, y_offset=7)
-            print("Ticker message updated.")
+        if not isinstance(payload, dict):
+            print("tickertape poll: expected JSON object")
+            return False
+
+        wares_ok = apply_wares_line(message_top, payload.get("wares"))
+        accounts_ok = apply_accounts_line(message_bottom, payload.get("accounts"))
+        if wares_ok or accounts_ok:
+            print("Tickertape updated.")
             return True
-        print("ticker poll: no usable 'message' in JSON")
+        print("tickertape poll: no usable wares or accounts")
         return False
     finally:
         resp.close()
@@ -163,7 +220,7 @@ time.sleep(3)
 ticker_poll_interval_s = None
 ticker_poll_callback = None
 
-# Fetch ticker JSON and set it as the top message
+# Fetch tickertape JSON and set top (wares) and bottom (accounts) messages
 if backend_host:
     print(f"Backend host (from settings): {backend_host}")
     host, port = parse_backend_host(backend_host)
@@ -189,22 +246,22 @@ if backend_host:
             try:
                 show_boot_status("ticker", status_color_ok)
                 requests = adafruit_requests.Session(pool, ssl.create_default_context())
-                print(f"GET http://{backend_host}/api/public/ticker")
+                print(f"GET http://{backend_host}/api/tickertape")
                 try:
-                    ok = fetch_and_apply_public_ticker(
-                        requests, backend_host, messageTop
+                    ok = fetch_and_apply_tickertape(
+                        requests, backend_host, messageTop, messageBottom
                     )
                 except Exception as exc:
                     show_backend_misconfig(
-                        f"Ticker request failed for {backend_host}: {exc}",
+                        f"Tickertape request failed for {backend_host}: {exc}",
                         "ticker",
                         "fetch fail",
                     )
                 else:
                     if not ok:
                         show_backend_misconfig(
-                            f"Ticker JSON at http://{backend_host}/api/public/ticker "
-                            "has no usable 'message' or non-200 response.",
+                            f"Tickertape JSON at http://{backend_host}/api/tickertape "
+                            "has no usable wares or accounts.",
                             "ticker",
                             "bad json",
                         )
@@ -212,19 +269,19 @@ if backend_host:
                         ticker_poll_interval_s = 20
 
                         def _ticker_poll():
-                            fetch_and_apply_public_ticker(
-                                requests, backend_host, messageTop
+                            fetch_and_apply_tickertape(
+                                requests, backend_host, messageTop, messageBottom
                             )
 
                         ticker_poll_callback = _ticker_poll
             except Exception as exc:
                 show_backend_misconfig(
-                    f"Ticker request failed for {backend_host}: {exc}",
+                    f"Tickertape request failed for {backend_host}: {exc}",
                     "ticker",
                     "fetch fail",
                 )
 else:
-    print("Missing BACKEND_HOST; skipping ticker fetch.")
+    print("Missing BACKEND_HOST; skipping tickertape fetch.")
 
 dual_scroll.run_forever(
     messageboard,
