@@ -18,12 +18,13 @@ import wifi
 
 import adafruit_requests
 
-import dual_scroll
+import triple_scroll
 
 print("booting...")
 
 matrix = Matrix(width=64, height=32, bit_depth=5, rotation=0)
 messageboard = MessageBoard(matrix)
+triple_scroll.fit_messageboard_to_panel(messageboard)
 # messageboard.set_background("images/background.bmp")
 fontpool = FontPool()
 fontpool.add_font("arial", "fonts/Arial-10.pcf")
@@ -33,18 +34,27 @@ status_color_ok = 0x3ABF24
 status_color_err = 0xFF4040
 
 color_wares = 0xFF7F50
-color_accounts = 0x3ABF24
-color_trend_up = 0x3ABF24
+color_accounts = 0x0000FF
+color_messages = 0x00CC00
+color_trend_up = 0x00CC00
 color_trend_down = 0xFF0000
 
-TOP_Y_OFFSET = 7
-BOTTOM_Y_OFFSET = -11
+BAND_HEIGHT = 10
+BAND_GAP = 1
+# MessageBoard y_offset is relative to an ~11px cursor baseline, not display row.
+# For 10+1+10+1+10 layout: wares rows 0-9, messages 11-20, accounts 22-31.
+Y_WARES = -(BAND_HEIGHT + BAND_GAP)  # -11
+Y_MESSAGES = 0
+Y_ACCOUNTS = BAND_HEIGHT
 
-messageTop = Message(fontpool.find_font("dejavu"))
-messageTop.add_text("_", color=color_wares, y_offset=TOP_Y_OFFSET)
+messageWares = Message(fontpool.find_font("dejavu"))
+messageWares.add_text("_", color=color_wares, y_offset=Y_WARES)
 
-messageBottom = Message(fontpool.find_font("dejavu"))
-messageBottom.add_text("_", color=color_accounts, y_offset=BOTTOM_Y_OFFSET)
+messageMessages = Message(fontpool.find_font("dejavu"))
+messageMessages.add_text("_", color=color_messages, y_offset=Y_MESSAGES)
+
+messageAccounts = Message(fontpool.find_font("dejavu"))
+messageAccounts.add_text("_", color=color_accounts, y_offset=Y_ACCOUNTS)
 
 ssid = os.getenv("CIRCUITPY_WIFI_SSID")
 password = os.getenv("CIRCUITPY_WIFI_PASSWORD")
@@ -87,7 +97,25 @@ def tcp_reachable(pool, host, port, timeout_s=5):
         sock.close()
 
 
-def apply_wares_line(message, wares):
+def apply_joined_line(message, items, color, y_offset, sep="   "):
+    """Build a single-colour tickertape line from string items."""
+    if not isinstance(items, list) or not items:
+        return False
+
+    parts = []
+    for entry in items:
+        text = str(entry).strip() if entry is not None else ""
+        if text:
+            parts.append(text)
+    if not parts:
+        return False
+
+    message.clear()
+    message.add_text(sep.join(parts) + " ", color=color, y_offset=y_offset)
+    return True
+
+
+def apply_wares_line(message, wares, y_offset):
     """Build top tickertape from wares list (name + trend-coloured price)."""
     if not isinstance(wares, list) or not wares:
         return False
@@ -118,36 +146,24 @@ def apply_wares_line(message, wares):
 
     message.clear()
     for text, color in segments:
-        message.add_text(text, color=color, y_offset=TOP_Y_OFFSET)
-    message.add_text(" ", color=color_wares, y_offset=TOP_Y_OFFSET)
+        message.add_text(text, color=color, y_offset=y_offset)
+    message.add_text(" ", color=color_wares, y_offset=y_offset)
     return True
 
 
-def apply_accounts_line(message, accounts):
-    """Build bottom tickertape from account strings."""
-    if not isinstance(accounts, list) or not accounts:
-        return False
-
-    parts = []
-    for entry in accounts:
-        text = str(entry).strip() if entry is not None else ""
-        if text:
-            parts.append(text)
-    if not parts:
-        return False
-
-    message.clear()
-    message.add_text(
-        "   ".join(parts) + " ",
-        color=color_accounts,
-        y_offset=BOTTOM_Y_OFFSET,
-    )
-    return True
+def apply_accounts_line(message, accounts, y_offset):
+    return apply_joined_line(message, accounts, color_accounts, y_offset)
 
 
-def fetch_and_apply_tickertape(requests_session, backend_host_spec, message_top, message_bottom):
+def apply_messages_line(message, messages, y_offset):
+    return apply_joined_line(message, messages, color_messages, y_offset)
+
+
+def fetch_and_apply_tickertape(
+    requests_session, backend_host_spec, message_wares, message_messages, message_accounts
+):
     """
-    GET /api/tickertape and refresh top (wares) and bottom (accounts) lines.
+    GET /api/tickertape and refresh wares, messages, and accounts lines.
     Returns True if at least one line was updated. Logs and returns False otherwise.
     """
     url = f"http://{backend_host_spec}/api/tickertape"
@@ -165,12 +181,17 @@ def fetch_and_apply_tickertape(requests_session, backend_host_spec, message_top,
             print("tickertape poll: expected JSON object")
             return False
 
-        wares_ok = apply_wares_line(message_top, payload.get("wares"))
-        accounts_ok = apply_accounts_line(message_bottom, payload.get("accounts"))
-        if wares_ok or accounts_ok:
+        wares_ok = apply_wares_line(message_wares, payload.get("wares"), Y_WARES)
+        messages_ok = apply_messages_line(
+            message_messages, payload.get("messages"), Y_MESSAGES
+        )
+        accounts_ok = apply_accounts_line(
+            message_accounts, payload.get("accounts"), Y_ACCOUNTS
+        )
+        if wares_ok or messages_ok or accounts_ok:
             print("Tickertape updated.")
             return True
-        print("tickertape poll: no usable wares or accounts")
+        print("tickertape poll: no usable wares, messages, or accounts")
         return False
     finally:
         resp.close()
@@ -220,7 +241,7 @@ time.sleep(3)
 ticker_poll_interval_s = None
 ticker_poll_callback = None
 
-# Fetch tickertape JSON and set top (wares) and bottom (accounts) messages
+# Fetch tickertape JSON and set wares, messages, and accounts lines
 if backend_host:
     print(f"Backend host (from settings): {backend_host}")
     host, port = parse_backend_host(backend_host)
@@ -249,7 +270,11 @@ if backend_host:
                 print(f"GET http://{backend_host}/api/tickertape")
                 try:
                     ok = fetch_and_apply_tickertape(
-                        requests, backend_host, messageTop, messageBottom
+                        requests,
+                        backend_host,
+                        messageWares,
+                        messageMessages,
+                        messageAccounts,
                     )
                 except Exception as exc:
                     show_backend_misconfig(
@@ -261,7 +286,7 @@ if backend_host:
                     if not ok:
                         show_backend_misconfig(
                             f"Tickertape JSON at http://{backend_host}/api/tickertape "
-                            "has no usable wares or accounts.",
+                            "has no usable wares, messages, or accounts.",
                             "ticker",
                             "bad json",
                         )
@@ -270,7 +295,11 @@ if backend_host:
 
                         def _ticker_poll():
                             fetch_and_apply_tickertape(
-                                requests, backend_host, messageTop, messageBottom
+                                requests,
+                                backend_host,
+                                messageWares,
+                                messageMessages,
+                                messageAccounts,
                             )
 
                         ticker_poll_callback = _ticker_poll
@@ -283,13 +312,15 @@ if backend_host:
 else:
     print("Missing BACKEND_HOST; skipping tickertape fetch.")
 
-dual_scroll.run_forever(
+TICKERTAPE_STREAMS = [
+    {"message": messageWares, "px_per_sec": 30},
+    {"message": messageMessages, "px_per_sec": 20},
+    {"message": messageAccounts, "px_per_sec": 10},
+]
+
+triple_scroll.run_forever(
     messageboard,
-    messageBottom,
-    messageTop,
-    y=0,
-    px_per_sec_bottom=10,
-    px_per_sec_top=30,
+    TICKERTAPE_STREAMS,
     poll_interval_s=ticker_poll_interval_s,
     poll_callback=ticker_poll_callback,
 )
